@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-
 from utils import clean_text
 
 try:
@@ -11,75 +10,84 @@ except Exception:
 from chains import Chain
 from portfolio import Portfolio
 
+st.set_page_config(page_title="Gen-AI Cold Email Generator", layout="wide")
+
+PROJECT_DESCRIPTION = "Generative AI tool to help software & AI services companies send cold emails to potential clients."
+
 def load_text_from_url(url: str) -> str:
     if not WebBaseLoader:
-        raise RuntimeError("WebBaseLoader not available. Paste text instead or install langchain-community.")
+        raise RuntimeError("URL loader not available. Install langchain-community.")
     loader = WebBaseLoader(url)
     try:
         docs = loader.load()
     except ModuleNotFoundError as e:
-        raise ModuleNotFoundError(
-            f"{e}. Install missing HTML parser packages: `beautifulsoup4` and `lxml`."
-        ) from e
+        raise ModuleNotFoundError(f"{e}. Install `beautifulsoup4` and `lxml`.") from e
     return "\n\n".join(getattr(d, "page_content", str(d)) for d in docs)
 
 def main():
-    st.title("Cold Email Generator")
-    st.markdown("Provide a careers page URL or paste the scraped text. Click Generate to extract jobs and create emails.")
-
-    url = st.text_input("Careers page URL (optional)")
-    pasted = st.text_area("Or paste scraped text here (optional)", height=200)
-    generate = st.button("Generate")
+    st.title("Gen-AI Cold Email Generator")
+    st.markdown(PROJECT_DESCRIPTION)
+    col1, col2 = st.columns([2,1])
+    with col1:
+        url = st.text_input("Careers page URL (optional)")
+        pasted = st.text_area("Or paste scraped text here (optional)", height=300)
+        generate = st.button("Generate")
+    with col2:
+        st.write("Settings")
+        sender_name = st.text_input("Sender name", value="Hari")
+        use_llm = st.checkbox("Use Groq LLM if available", value=True)
+        show_raw = st.checkbox("Show extracted jobs", value=False)
 
     if generate:
-        page_text = pasted.strip()
+        page_text = (pasted or "").strip()
         if not page_text and url:
             if not WebBaseLoader:
-                st.error("URL loading not available because langchain-community is not installed. Paste text instead.")
+                st.error("URL loading not available in this environment. Paste text instead.")
                 return
-            with st.spinner("Loading URL..."):
+            with st.spinner("Loading page..."):
                 try:
                     page_text = load_text_from_url(url)
-                except ModuleNotFoundError as e:
-                    st.error(str(e))
-                    return
                 except Exception as e:
                     st.error(f"Failed to load URL: {e}")
                     return
 
         if not page_text:
-            st.error("No input provided. Paste text or supply a URL.")
+            st.error("Provide a URL or paste text.")
             return
 
         cleaned = clean_text(page_text)
         chain = Chain()
-        try:
+        if not use_llm:
+            chain.llm = None
+
+        with st.spinner("Extracting jobs..."):
             jobs = chain.extract_jobs(cleaned)
-        except Exception as e:
-            st.error(f"Job extraction failed: {e}")
-            return
+
+        if show_raw:
+            st.subheader("Raw extracted jobs")
+            st.json(jobs)
 
         port = Portfolio()
-        results = []
-        for job in jobs:
-            links = port.query_links(job.get("skills", ""))
-            email = chain.write_mail(job, links)
-            results.append((job, links, email))
-
-        for i, (job, links, email) in enumerate(results, start=1):
+        st.write(f"Found {len(jobs)} job(s).")
+        for i, job in enumerate(jobs, start=1):
             st.divider()
-            st.subheader(f"Job #{i}: {job.get('role', 'Unknown')}")
-            st.write("Experience:", job.get("experience", "Not specified"))
+            st.subheader(f"Job #{i}: {job.get('role','Unknown')}")
+            st.write("Experience:", job.get("experience","Not specified"))
             st.write("Skills:", job.get("skills", []))
             st.write("Description:")
-            st.write(job.get("description", ""))
-            st.write("Portfolio links:")
-            for l in links:
-                st.write(l)
-            st.markdown("**Generated cold email:**")
+            st.write(job.get("description","")[:400] + ("..." if len(job.get("description",""))>400 else ""))
+
+            try:
+                links = port.query_links(job.get("skills", []))
+            except Exception:
+                links = []
+
+            email = chain.write_mail(job, links, sender_name=sender_name)
+            st.markdown("**Generated email**")
             st.code(email)
 
 if __name__ == "__main__":
     main()
+
 
 
