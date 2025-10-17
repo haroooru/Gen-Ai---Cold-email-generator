@@ -3,7 +3,8 @@ pandas
 python-dotenv
 beautifulsoup4
 lxml
-# optional if you use LLM/loader features
+chromadb
 langchain-community
 langchain-groq
 langchain-core
+orjson
