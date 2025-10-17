@@ -1,16 +1,55 @@
+# ...existing code...
 import os
 import re
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Lightweight Chain: will try to use ChatGroq if installed, otherwise fallback to heuristic parser
+# optional HTML parser
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except Exception:
+    BeautifulSoup = None
+    BS4_AVAILABLE = False
+
+# optional LLM (keeps fallback)
 try:
     from langchain_groq import ChatGroq
     LLM_AVAILABLE = True
 except Exception:
     ChatGroq = None
     LLM_AVAILABLE = False
+
+ROLE_KEYWORDS = r"(engineer|developer|manager|analyst|designer|intern|scientist|specialist|consultant|associate|partner|sales|support|engineer|marketing|product)"
+SPLIT_MARKERS = [r"View Job", r"Apply", r"Job", r"Position", r"Openings", r"Role", r"Careers"]
+
+def _clean_role_text(s: str) -> str:
+    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"(?i)\b(view job|apply|learn more|see details)\b.*", "", s)
+    s = re.sub(r"[-—|·\|]+\s*$", "", s).strip()
+    s = re.sub(r"\s*\([^)]+\)\s*$", "", s).strip()
+    return s
+
+def _extract_skill_block(text: str):
+    # look for "Requirements/Qualifications/Skills" and return following bullet lines
+    m = re.search(r"(?is)(requirements|qualifications|skills|you should have|what we're looking for)[\s:.-]*(.*)", text)
+    skills = []
+    if m:
+        tail = text[m.end(1):]
+        # capture bullets near header
+        bullets = re.findall(r"(?m)^[\-\u2022\*\•]\s*(.+)$", tail)
+        if bullets:
+            skills = [b.strip() for b in bullets if len(b.strip()) > 1]
+        else:
+            # fallback: take short comma separated phrases from the next 2 lines
+            lines = tail.splitlines()
+            if lines:
+                candidate = " ".join(lines[:3])
+                skills = [s.strip() for s in re.split(r"[;,/]| and | or ", candidate) if len(s.strip())>1]
+    # final cleanup & lowercase
+    return [s.lower() for s in skills][:20]
 
 class Chain:
     def __init__(self):
@@ -25,83 +64,153 @@ class Chain:
 
     def extract_jobs(self, cleaned_text: str):
         """
-        Return a list of job dicts with keys: role, experience, skills (list), description.
-        If an LLM is available it will be used, otherwise a heuristic extractor runs.
+        Attempt structured extraction:
+        1) If LLM available, try LLM first (best-effort).
+        2) If bs4 available, parse HTML-like content and extract job-card blocks.
+        3) Otherwise use improved text heuristics: split on markers, extract title, skills and description.
+        Returns list of dicts: {role, experience, skills, description}
         """
+        # 1) LLM attempt (non-fatal)
         if self.llm:
-            # If an LLM object exists, try a simple prompt invoke if supported.
             try:
                 prompt = (
-                    "You are given scraped text from a careers page. Extract job postings as JSON list "
-                    "with keys role, experience, skills (list) and description. Only return valid JSON.\n\n"
+                    "Extract job postings from the text below as a JSON list of objects with keys: "
+                    "role, experience, skills (list) and description. Only output JSON.\n\n"
                     f"{cleaned_text}"
                 )
-                # try common LLM call methods
                 if hasattr(self.llm, "invoke"):
                     resp = self.llm.invoke(prompt)
                     text = getattr(resp, "text", str(resp))
-                elif hasattr(self.llm, "chat"):
-                    resp = self.llm.chat([{"role": "user", "content": prompt}])
-                    text = resp[0]["content"]
                 else:
                     text = str(self.llm(prompt))
-                # attempt simple JSON extraction from text
-                import json
                 start = text.find("[")
                 end = text.rfind("]") + 1
                 if start != -1 and end != -1:
-                    return json.loads(text[start:end])
+                    parsed = json.loads(text[start:end])
+                    if isinstance(parsed, list) and parsed:
+                        return parsed
             except Exception:
-                # fall back to heuristic
-                pass
+                pass  # fall through to heuristics
 
-        # Heuristic extractor (non-LLM): simple regex and keyword matching
-        lines = [l.strip() for l in cleaned_text.splitlines() if l.strip()]
-        text = " ".join(lines)
-        # split into candidate blocks by common separators
-        blocks = re.split(r"\n{2,}|-{3,}|={3,}", cleaned_text)
-        candidates = []
-        skill_keywords = [
-            "python", "javascript", "react", "aws", "docker", "sql", "java", "c#", "node", "golang",
-            "machine learning", "nlp", "data", "excel", "communication", "leadership"
-        ]
-        role_patterns = r"(engineer|developer|manager|analyst|designer|intern|scientist|specialist|consultant)"
+        blocks = []
+        # 2) If bs4 available, try to isolate job cards
+        if BS4_AVAILABLE:
+            try:
+                soup = BeautifulSoup(cleaned_text, "html.parser")
+                # common patterns: articles, list items, divs with job-like text
+                candidates = []
+                for tag in soup.find_all(['article', 'li', 'div', 'section']):
+                    txt = tag.get_text(separator="\n").strip()
+                    if not txt or len(txt) < 20:
+                        continue
+                    low = txt.lower()
+                    if any(marker.lower() in low for marker in ["view job", "apply", "job", "position", "careers"]):
+                        candidates.append(txt)
+                # if none found, fallback to heading-based discovery
+                if not candidates:
+                    for h in soup.find_all(['h1','h2','h3','h4']):
+                        parent = h.find_parent()
+                        if parent:
+                            txt = parent.get_text(separator="\n").strip()
+                            if len(txt) > 30:
+                                candidates.append(txt)
+                blocks = candidates
+            except Exception:
+                blocks = []
+
+        # 3) Text heuristics if no bs4 result
+        if not blocks:
+            # Normalize newlines and split by strong markers
+            join_markers = "|".join([re.escape(m) for m in SPLIT_MARKERS])
+            parts = re.split(rf"(?i)(?:{join_markers})", cleaned_text)
+            # If splitting too coarse, also split by multiple newlines
+            if len(parts) < 2:
+                parts = re.split(r"\n{2,}", cleaned_text)
+            for p in parts:
+                p = p.strip()
+                if not p or len(p) < 30:
+                    continue
+                # filter out big navigation blocks that look like filters
+                if re.search(r"filter results|go to first page|go to next page|page \d+", p, flags=re.I):
+                    continue
+                blocks.append(p)
+
+        jobs = []
+        seen_titles = set()
         for b in blocks:
-            if re.search(role_patterns, b, flags=re.I):
-                # role: first occurrence of pattern
-                m = re.search(r"([A-Z][A-Za-z0-9 &/-]{1,60}?(?:engineer|developer|manager|analyst|designer|intern|scientist|specialist|consultant))", b, flags=re.I)
-                role = m.group(1).strip() if m else re.search(role_patterns, b, flags=re.I).group(0).title()
-                # skills found
-                found_skills = []
+            # get first candidate title line
+            lines = [l.strip() for l in b.splitlines() if l.strip()]
+            title = ""
+            # prefer short lines with role keywords
+            for ln in lines[:6]:
+                if re.search(ROLE_KEYWORDS, ln, flags=re.I) and 3 < len(ln) < 120:
+                    title = ln
+                    break
+            if not title:
+                # fallback: first non-empty line that's not too long
+                title = lines[0] if lines else ""
+            title = _clean_role_text(title)
+            norm = re.sub(r"\W+", " ", title).strip().lower()
+            if not title or norm in seen_titles:
+                continue
+            seen_titles.add(norm)
+
+            # experience detection
+            exp = "Not specified"
+            mexp = re.search(r"(\d+\+?\s+years|\d+\s+years|mid[\- ]level|senior|junior|entry)", b, flags=re.I)
+            if mexp:
+                exp = mexp.group(0)
+
+            # skills
+            skills = _extract_skill_block(b)
+            # final fallback: search for known skill keywords inline
+            if not skills:
+                skill_keywords = ["python","java","javascript","react","aws","sql","docker","kubernetes","excel","machine learning","nlp","data","sales","communication","leadership"]
+                found = []
+                lower_b = b.lower()
                 for sk in skill_keywords:
-                    if re.search(r"\b" + re.escape(sk) + r"\b", b, flags=re.I):
-                        found_skills.append(sk)
-                candidates.append({
-                    "role": role,
-                    "experience": "Not specified",
-                    "skills": found_skills,
-                    "description": b.strip()
-                })
-        # if nothing found, create one generic job
-        if not candidates:
-            candidates.append({
+                    if re.search(r"\b" + re.escape(sk) + r"\b", lower_b):
+                        found.append(sk)
+                skills = found
+
+            desc = b
+            # trim description length
+            desc = re.sub(r"\s{2,}", " ", desc).strip()
+            if len(desc) > 2000:
+                desc = desc[:2000] + "..."
+
+            jobs.append({
+                "role": title,
+                "experience": exp,
+                "skills": skills,
+                "description": desc
+            })
+
+        # if nothing found, return a single generic block
+        if not jobs:
+            jobs.append({
                 "role": "Unknown role",
                 "experience": "Not specified",
                 "skills": [],
-                "description": text[:1000]
+                "description": cleaned_text[:1500]
             })
-        return candidates
+        return jobs
 
     def write_mail(self, job: dict, links: list):
-        """
-        Produce a short cold email string using job info and portfolio links.
-        """
         role = job.get("role", "the role")
-        skills = job.get("skills", [])
-        skill_str = ", ".join(skills) if skills else "relevant skills"
-        intro = f"Hi,\n\nI saw the {role} opening on your careers page and wanted to introduce myself."
-        body = f"I have experience with {skill_str} and believe I can contribute to your team."
+        skills = job.get("skills", []) or []
+        top_skills = skills[:3]
+        skill_str = ", ".join(top_skills) if top_skills else "relevant experience"
+        intro = f"Hi,\n\nI came across the {role} opening on your careers page and wanted to introduce myself."
+        body_lines = [
+            f"I have {skill_str} and experience that aligns with this role.",
+        ]
         if links:
-            body += "\n\nRelevant work samples:\n" + "\n".join(f"- {u}" for u in links)
-        closing = "\n\nWould love to discuss how I can help. Best regards,\n[Your Name]\n[Your Email]"
-        return "\n\n".join([intro, body, closing])
+            body_lines.append("Here are a few relevant work samples:")
+            for u in links[:5]:
+                body_lines.append(f"- {u}")
+        body_lines.append("\nWould love to discuss how I can contribute to your team.")
+        closing = "\n\nBest regards,\n[Your Name]\n[Your Email]"
+        return "\n\n".join([intro, "\n".join(body_lines), closing])
+# ...existing code...
+
