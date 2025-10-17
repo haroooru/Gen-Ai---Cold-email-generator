@@ -1,16 +1,10 @@
 import re
 
-def clean_text(text):
-    # Remove HTML tags
-    text = re.sub(r'<[^>]*?>', '', text)
-    # Remove URLs
-    text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
-    # Remove special characters
-    text = re.sub(r'[^a-zA-Z0-9 ]', '', text)
-    # Replace multiple spaces with a single space
-    text = re.sub(r'\s{2,}', ' ', text)
-    # Trim leading and trailing whitespace
-    text = text.strip()
-    # Remove extra whitespace
-    text = ' '.join(text.split())
-    return text
+def clean_text(text: str) -> str:
+    if text is None:
+        return ""
+    # simple cleaning: remove extra whitespace, weird control chars
+    text = re.sub(r"\r\n", "\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
