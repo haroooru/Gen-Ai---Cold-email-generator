@@ -1,8 +1,9 @@
 streamlit==1.50.0
 pandas
 python-dotenv
-# optional (install if you plan to use Groq/LLM and WebBaseLoader)
+beautifulsoup4
+lxml
+# optional LLM / loader packages if you use them
 langchain-community
 langchain-groq
 langchain-core
-
