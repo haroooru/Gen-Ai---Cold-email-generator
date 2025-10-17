@@ -1,18 +1,20 @@
-# --- Core Streamlit App ---
+# --- Streamlit and Utils ---
 streamlit==1.35.0
 pandas==2.0.2
 python-dotenv==1.0.0
+requests==2.31.0
+tiktoken==0.7.0
+beautifulsoup4==4.12.3
 
-# --- LangChain Ecosystem (with compatible versions) ---
+# --- LangChain Split Packages ---
 langchain==0.2.14
 langchain-core==0.2.35
 langchain-community==0.2.12
+langchain-text-splitters==0.2.2
 langchain-groq==0.1.9
 
-# --- Utilities & Document Parsing ---
+# --- Additional Dependencies ---
 unstructured==0.14.6
 chromadb==0.5.0
 selenium==4.21.0
-beautifulsoup4==4.12.3
-requests==2.31.0
-tiktoken==0.7.0
+
