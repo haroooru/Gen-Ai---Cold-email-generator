@@ -88,18 +88,30 @@ class Chain:
             )
             self.prompt_email = PromptTemplate.from_template(
                 """
-                ### JOB JSON:
-                {job_json}
-                ### PORTFOLIO LINKS:
-                {link_list}
-                ### INSTRUCTION:
-                You are Hari, Business Development Executive at AtliQ (AI & Software consulting).
-                Write a concise professional cold email (subject line then body). 
-                - Highlight 2–3 most relevant skills/experience from the job JSON.
-                - Include the most relevant portfolio links from the link list.
-                - Keep the email short, specific and polite.
-                Output ONLY the email text (subject + body).
-                """
+    ### COMPANY'S JOB OR CAREER POSTINGS:
+    {job_json}
+
+    ### ATLIQ PORTFOLIO LINKS:
+    {link_list}
+
+    ### ROLE:
+    You are Haripriya, Business Development Executive at **AtliQ**, an AI & Software Consultancy.
+    Your objective is **not to apply for jobs**, but to **propose AtliQ’s technical expertise and AI solutions** 
+    that can help the company scale or fill their engineering gaps through contract-based collaboration.
+
+    ### TASK:
+    Write a persuasive, concise business email addressed to the company's hiring or technical team.
+
+    Follow these guidelines:
+    - Start with a relevant, specific **subject line** (mention company domain or hiring context if possible).
+    - Open by showing awareness of their recent openings or projects.
+    - Transition into how AtliQ’s experts and AI solutions can assist them (e.g., faster delivery, custom automation, analytics pipelines, etc.).
+    - Reference 1–2 **portfolio links** naturally as proof of prior success.
+    - Keep tone confident, warm, and helpful (not job-seeking).
+    - End with a clear **call-to-action**, e.g., “Would you be open to a brief call to explore how we can help?”
+
+    Output only the **email subject and body**, nothing else.
+    """
             )
 
     def extract_jobs(self, page_text: str):
