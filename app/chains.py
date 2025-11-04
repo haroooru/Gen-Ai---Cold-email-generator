@@ -67,7 +67,7 @@ class Chain:
         self.llm = None
         if ChatGroq and self.groq_key:
             try:
-                self.llm = ChatGroq(temperature=0, groq_api_key=self.groq_key, model_name="llama-3.1-70b-versatile")
+                self.llm = ChatGroq(temperature=0, groq_api_key=self.groq_key, model_name="llama-3.3-70b-versatile")
             except Exception:
                 self.llm = None
 
